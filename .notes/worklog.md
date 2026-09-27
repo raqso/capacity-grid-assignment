@@ -14,5 +14,13 @@ Assumption: `hours_per_day` is fraction of an 8-hour day (0–1), so `hours_per_
 
 **Inline editing**: click capacity cell → input → Enter/blur to save, Escape to cancel. Disabled during save, inline error on failure. On success: invalidate all `['capacity']` queries so any cached range refetches. Chose refetch over optimistic update — optimistic update would need to patch every cached range permutation; not worth the complexity at this scope. Worth revisiting if save latency becomes noticeable.
 
-**Not done yet:** tests (vitest).
+**Tygo type generation**: Go structs are single source of truth. TypeScript types in `web/src/generated/api.ts` are generated from Go via `tygo`. Regenerate command in the file header comment. Had to rename `updatePersonResponse` → `PersonResponse` (exported) for tygo to pick it up. No host Go needed — runs inside api container via `go run`.
+
+**Cache fix**: `shiftWeeks` was computing `to`'s new value from its own Monday rather than shifting by a fixed N×7. This caused the dates to drift each shift, so navigating back produced a different query key → cache miss → extra request. Fix: both `from` and `to` shift by exactly `N×7` days. Also added `placeholderData: prev => prev` to `useCapacity` so navigation shows stale data instead of blank while the new range loads.
+
+**Cursor pagination**: `GET /api/capacity?limit=N&after=ID` — cursor is the last person id seen. Returns `next_cursor: null` on last page. Default 100 people/page, max 500. `useCapacity` uses `useInfiniteQuery`; next page loads on scroll near bottom (within 200px). `flattenCapacityPages` helper flattens all pages for the table.
+
+**TanStack Table v8 + Virtual**: TanStack Table (`@tanstack/react-table@^8`) for column definitions and row model; `@tanstack/react-virtual` for windowed row rendering. v9 was installed by default — incompatible API, pinned to v8. Column array typed `ColumnDef<PersonCapacity, any>[]` since we mix string/number/WeekData accessor value types in one array.
+
+**Not done yet:** vitest tests.
 
