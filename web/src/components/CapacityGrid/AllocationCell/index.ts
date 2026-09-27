@@ -1,0 +1,1 @@
+export { AllocationCell } from './AllocationCell'

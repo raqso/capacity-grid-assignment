@@ -22,5 +22,6 @@ Assumption: `hours_per_day` is fraction of an 8-hour day (0–1), so `hours_per_
 
 **TanStack Table v8 + Virtual**: TanStack Table (`@tanstack/react-table@^8`) for column definitions and row model; `@tanstack/react-virtual` for windowed row rendering. v9 was installed by default — incompatible API, pinned to v8. Column array typed `ColumnDef<PersonCapacity, any>[]` since we mix string/number/WeekData accessor value types in one array.
 
-**Not done yet:** vitest tests.
+**Frontend refactor & test suite:**
+Refactored monolithic `CapacityGrid.tsx` into isolated component directories (`CapacityGrid`, `CapacityCell`, `AllocationCell`, `RangeControls`, `App`) with colocated hooks (`useCapacity`, `usePatchPerson`) and pure date helpers in `src/utils/date.ts`. Replaced 1-letter variables with self-describing names, removed noise comments, improved keyboard/screen-reader accessibility on editable capacity cells, and added comprehensive Vitest + React Testing Library test suites alongside each component.
 
