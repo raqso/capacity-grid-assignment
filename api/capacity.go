@@ -112,7 +112,7 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 								'1 day'::interval
 							) AS d
 							WHERE EXTRACT(ISODOW FROM d) <= 5
-						) * a.hours_per_day * 8
+						) * a.hours_per_day * (p.weekly_hours / 5.0)
 					),
 					0
 				) AS allocated_hours
@@ -122,7 +122,7 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 				AND a.start_date <= w.week_monday + 6
 				AND a.end_date   >= w.week_monday
 			WHERE p.id > $3
-			GROUP BY p.id, w.week_monday
+			GROUP BY p.id, p.weekly_hours, w.week_monday
 		)
 		SELECT
 			p.id,

@@ -25,3 +25,6 @@ Assumption: `hours_per_day` is fraction of an 8-hour day (0–1), so `hours_per_
 **Frontend refactor & test suite:**
 Refactored monolithic `CapacityGrid.tsx` into isolated component directories (`CapacityGrid`, `CapacityCell`, `AllocationCell`, `RangeControls`, `App`) with colocated hooks (`useCapacity`, `usePatchPerson`) and pure date helpers in `src/utils/date.ts`. Replaced 1-letter variables with self-describing names, removed noise comments, improved keyboard/screen-reader accessibility on editable capacity cells, and added comprehensive Vitest + React Testing Library test suites alongside each component.
 
+**Allocation calculation adjustment**:
+`hours_per_day` is the percentage / fraction of each person's standard working time (not a fixed 8h day). Updated calculation from `hours_per_day * 8` to `hours_per_day * (p.weekly_hours / 5.0)` per overlapping weekday. A person with 20h weekly capacity allocated at 0.25 (25%) on 5 weekdays receives `5 * 0.25 * 4h = 5h` allocation, rather than assuming standard 8h full-time days.
+
