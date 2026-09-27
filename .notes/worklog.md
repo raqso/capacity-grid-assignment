@@ -10,4 +10,9 @@ Allocation numbers look enormous (Ana Ferreira: 320h week of Dec 29). Verified i
 
 Assumption: `hours_per_day` is fraction of an 8-hour day (0–1), so `hours_per_day × 8 = hours`. Confirmed by user.
 
-**Not done yet:** grid (Task 2), PATCH endpoint (Task 3).
+**CapacityGrid implemented** with `useCapacity` (TanStack Query), week nav (‹ ›), date pickers, loading/error/refetching states, sticky name column, per-cell over-allocation highlight.
+
+**Inline editing**: click capacity cell → input → Enter/blur to save, Escape to cancel. Disabled during save, inline error on failure. On success: invalidate all `['capacity']` queries so any cached range refetches. Chose refetch over optimistic update — optimistic update would need to patch every cached range permutation; not worth the complexity at this scope. Worth revisiting if save latency becomes noticeable.
+
+**Not done yet:** tests (vitest).
+
