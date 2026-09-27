@@ -25,6 +25,7 @@ Assumption: `hours_per_day` is fraction of an 8-hour day (0–1), so `hours_per_
 **Frontend refactor & test suite:**
 Refactored monolithic `CapacityGrid.tsx` into isolated component directories (`CapacityGrid`, `CapacityCell`, `AllocationCell`, `RangeControls`, `App`) with colocated hooks (`useCapacity`, `usePatchPerson`) and pure date helpers in `src/utils/date.ts`. Replaced 1-letter variables with self-describing names, removed noise comments, improved keyboard/screen-reader accessibility on editable capacity cells, and added comprehensive Vitest + React Testing Library test suites alongside each component.
 
-**Allocation calculation adjustment**:
-`hours_per_day` is the percentage / fraction of each person's standard working time (not a fixed 8h day). Updated calculation from `hours_per_day * 8` to `hours_per_day * (p.weekly_hours / 5.0)` per overlapping weekday. A person with 20h weekly capacity allocated at 0.25 (25%) on 5 weekdays receives `5 * 0.25 * 4h = 5h` allocation, rather than assuming standard 8h full-time days.
+**Assignment deduplication and stable allocation (Option B):**
+Discovered that `db/seed.sql` contained 15 identical duplicate rows for each assignment on the same `(person_id, project_id, start_date, end_date)`. This caused every person's allocations to appear 15x over-allocated (e.g. Ana Ferreira having 15 duplicates of Project 1 Atlas totaling 320h). Implemented deduplication in `api/capacity.go` using a CTE `distinct_assignments` grouping by `(person_id, project_id, start_date, end_date)`.
+Allocated hours are calculated as `overlap_weekdays * hours_per_day * 8` (where `hours_per_day` is fraction of standard 8h workday: 0.5 = 4h/d = 20h/wk). This cleanly decouples allocated work hours from person capacity: when a manager edits a person's `weekly_hours`, their assigned project work remains stable and independent, correctly reflecting increased or decreased available capacity headroom.
 

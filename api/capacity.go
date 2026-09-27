@@ -92,11 +92,23 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cursor-based query: fetch limit+1 rows to detect whether a next page exists.
+	// CTE distinct_assignments deduplicates duplicate rows from the seed per (person_id, project_id, start_date, end_date).
 	// Inner correlated subquery counts weekday overlap days for each (person, week, assignment).
+	// hours_per_day is a fraction of a standard 8-hour workday (0.125 = 1h/day, 0.5 = 4h/day, 1.0 = 8h/day).
 	const query = `
 		WITH weeks AS (
 			SELECT generate_series::date AS week_monday
 			FROM generate_series($1::date, $2::date, '7 days'::interval)
+		),
+		distinct_assignments AS (
+			SELECT
+				person_id,
+				project_id,
+				start_date,
+				end_date,
+				MIN(hours_per_day) AS hours_per_day
+			FROM assignments
+			GROUP BY person_id, project_id, start_date, end_date
 		),
 		week_allocations AS (
 			SELECT
@@ -107,22 +119,22 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 						(
 							SELECT COUNT(*)
 							FROM generate_series(
-								GREATEST(a.start_date, w.week_monday),
-								LEAST(a.end_date, w.week_monday + 6),
+								GREATEST(da.start_date, w.week_monday),
+								LEAST(da.end_date, w.week_monday + 6),
 								'1 day'::interval
 							) AS d
 							WHERE EXTRACT(ISODOW FROM d) <= 5
-						) * a.hours_per_day * (p.weekly_hours / 5.0)
+						) * da.hours_per_day * 8
 					),
 					0
 				) AS allocated_hours
 			FROM people p
 			CROSS JOIN weeks w
-			LEFT JOIN assignments a ON a.person_id = p.id
-				AND a.start_date <= w.week_monday + 6
-				AND a.end_date   >= w.week_monday
+			LEFT JOIN distinct_assignments da ON da.person_id = p.id
+				AND da.start_date <= w.week_monday + 6
+				AND da.end_date   >= w.week_monday
 			WHERE p.id > $3
-			GROUP BY p.id, p.weekly_hours, w.week_monday
+			GROUP BY p.id, w.week_monday
 		)
 		SELECT
 			p.id,
