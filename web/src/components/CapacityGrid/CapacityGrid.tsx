@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { PersonCapacity } from "../../generated/api";
-import { addDays, toIsoDate, formatWeekLabel } from "../../utils/date";
+import { shiftIsoWeek, formatWeekLabel } from "../../utils/date";
 import { CapacityCell } from "./CapacityCell/CapacityCell";
 import { AllocationCell } from "./AllocationCell/AllocationCell";
 import { RangeControls } from "./RangeControls/RangeControls";
@@ -42,15 +42,8 @@ export function CapacityGrid({
 	} = useCapacity(from, to);
 
 	function shiftWeeks(weekCount: number) {
-		const daysToShift = weekCount * 7;
-		setFrom((previousFrom) =>
-			toIsoDate(
-				addDays(new Date(previousFrom + "T00:00:00"), daysToShift),
-			),
-		);
-		setTo((previousTo) =>
-			toIsoDate(addDays(new Date(previousTo + "T00:00:00"), daysToShift)),
-		);
+		setFrom((previousFrom) => shiftIsoWeek(previousFrom, weekCount));
+		setTo((previousTo) => shiftIsoWeek(previousTo, weekCount));
 	}
 
 	const weeks = useMemo(() => data?.pages[0]?.weeks ?? [], [data?.pages]);
