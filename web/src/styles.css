@@ -148,15 +148,46 @@ td {
   border-left: 3px solid #e74c3c;
 }
 
-/* ── edit input (Task 3) ────────────────────────────────── */
+/* ── editable capacity cell ──────────────────────────────── */
+
+.col-capacity--clickable {
+  cursor: pointer;
+}
+
+.col-capacity--clickable:hover {
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  text-decoration: underline dotted;
+}
+
+.col-capacity--editing {
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+}
 
 .edit-input {
-  width: 4rem;
+  width: 4.5rem;
   font: inherit;
   font-size: inherit;
-  padding: 0.1rem 0.25rem;
+  padding: 0.15rem 0.3rem;
   border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
   border-radius: 3px;
-  background: transparent;
+  background: Canvas;
   color: inherit;
+}
+
+.edit-input:disabled {
+  opacity: 0.5;
+}
+
+.edit-saving {
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.edit-error {
+  display: block;
+  font-size: 0.75rem;
+  color: #c0392b;
+  margin-top: 0.15rem;
 }
