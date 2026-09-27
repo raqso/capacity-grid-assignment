@@ -10,7 +10,8 @@ type updatePersonRequest struct {
 	WeeklyHours float64 `json:"weekly_hours"`
 }
 
-type updatePersonResponse struct {
+// PersonResponse is the shape returned by PATCH /api/people/{id}.
+type PersonResponse struct {
 	ID          int     `json:"id"`
 	Name        string  `json:"name"`
 	WeeklyHours float64 `json:"weekly_hours"`
@@ -39,7 +40,7 @@ func (s *server) handleUpdatePerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var resp updatePersonResponse
+	var resp PersonResponse
 	err = s.db.QueryRow(
 		r.Context(),
 		`UPDATE people SET weekly_hours = $1 WHERE id = $2

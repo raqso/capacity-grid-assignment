@@ -1,16 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { PersonResponse } from './generated/api'
 
 interface PatchPersonBody {
   weekly_hours: number
 }
 
-interface PatchPersonResult {
-  id: number
-  name: string
-  weekly_hours: number
-}
-
-async function patchPerson(id: number, body: PatchPersonBody): Promise<PatchPersonResult> {
+async function patchPerson(id: number, body: PatchPersonBody): Promise<PersonResponse> {
   const res = await fetch(`/api/people/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -20,7 +15,7 @@ async function patchPerson(id: number, body: PatchPersonBody): Promise<PatchPers
     const text = await res.text()
     throw new Error(`${res.status}: ${text.trim()}`)
   }
-  return res.json() as Promise<PatchPersonResult>
+  return res.json() as Promise<PersonResponse>
 }
 
 /**

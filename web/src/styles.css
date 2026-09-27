@@ -94,8 +94,13 @@ td {
 /* ── table layout ───────────────────────────────────────── */
 
 .table-scroll {
-  overflow-x: auto;
+  overflow: auto;
   max-width: 100%;
+  /* Fixed height required for TanStack Virtual to measure the scroll container.
+     Adjust to taste or compute from viewport. */
+  height: calc(100vh - 14rem);
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 4px;
 }
 
 .col-name {

@@ -1,17 +1,17 @@
-import { useState, useRef, useEffect } from 'react'
-import { useCapacity } from './useCapacity'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import {
+  useReactTable,
+  getCoreRowModel,
+  createColumnHelper,
+  flexRender,
+  type ColumnDef,
+} from '@tanstack/react-table'
+import { useVirtualizer } from '@tanstack/react-virtual'
+import { useCapacity, flattenCapacityPages } from './useCapacity'
 import { usePatchPerson } from './usePatchPerson'
-import type { PersonCapacity, WeekData } from './types'
+import type { PersonCapacity, WeekData } from './generated/api'
 
 // ── date helpers ──────────────────────────────────────────────────────────────
-
-function mondayOf(d: Date): Date {
-  const day = d.getDay()
-  const offset = day === 0 ? -6 : 1 - day
-  const m = new Date(d)
-  m.setDate(d.getDate() + offset)
-  return m
-}
 
 function addDays(d: Date, n: number): Date {
   const r = new Date(d)
@@ -30,34 +30,7 @@ function formatWeekLabel(iso: string): string {
   return `${start} – ${end}`
 }
 
-// ── AllocationCell ────────────────────────────────────────────────────────────
-
-interface CellProps {
-  data: WeekData | undefined
-}
-
-function AllocationCell({ data }: CellProps) {
-  if (!data) return <td className="cell cell--empty">—</td>
-
-  const { allocated_hours, capacity_hours } = data
-  const isOver = capacity_hours > 0 && allocated_hours > capacity_hours
-  const isEmpty = allocated_hours === 0
-  const pct = capacity_hours > 0 ? Math.round((allocated_hours / capacity_hours) * 100) : null
-
-  return (
-    <td
-      className={['cell', isOver && 'cell--over', isEmpty && 'cell--empty']
-        .filter(Boolean)
-        .join(' ')}
-      title={pct != null ? `${pct}% of capacity` : undefined}
-    >
-      <span className="cell-allocated">{allocated_hours.toFixed(1)}h</span>
-      {isOver && <span className="cell-over-badge">!</span>}
-    </td>
-  )
-}
-
-// ── CapacityCell (editable) ───────────────────────────────────────────────────
+// ── CapacityCell (editable weekly hours) ─────────────────────────────────────
 
 interface CapacityCellProps {
   personId: number
@@ -71,10 +44,13 @@ function CapacityCell({ personId, weeklyHours }: CapacityCellProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const { mutate, isPending } = usePatchPerson()
 
-  // Reset draft whenever the prop changes (after a successful save + refetch).
   useEffect(() => {
     setDraft(String(weeklyHours))
   }, [weeklyHours])
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
 
   function startEdit() {
     setSaveError(null)
@@ -91,24 +67,18 @@ function CapacityCell({ personId, weeklyHours }: CapacityCellProps) {
   function commit() {
     const parsed = parseFloat(draft)
     if (isNaN(parsed) || parsed < 0) {
-      setSaveError('Must be a number ≥ 0')
+      setSaveError('Must be ≥ 0')
       return
     }
     if (parsed === weeklyHours) {
       setEditing(false)
       return
     }
-
     mutate(
       { id: personId, body: { weekly_hours: parsed } },
       {
-        onSuccess: () => {
-          setEditing(false)
-          setSaveError(null)
-        },
-        onError: err => {
-          setSaveError(err instanceof Error ? err.message : 'Save failed')
-        },
+        onSuccess: () => { setEditing(false); setSaveError(null) },
+        onError: err => setSaveError(err instanceof Error ? err.message : 'Save failed'),
       },
     )
   }
@@ -118,14 +88,9 @@ function CapacityCell({ personId, weeklyHours }: CapacityCellProps) {
     if (e.key === 'Escape') cancel()
   }
 
-  // Focus input when edit starts.
-  useEffect(() => {
-    if (editing) inputRef.current?.select()
-  }, [editing])
-
   if (editing) {
     return (
-      <td className="col-capacity col-capacity--editing">
+      <div className="col-capacity--editing">
         <input
           ref={inputRef}
           className="edit-input"
@@ -141,18 +106,39 @@ function CapacityCell({ personId, weeklyHours }: CapacityCellProps) {
         />
         {isPending && <span className="edit-saving">saving…</span>}
         {saveError && <span className="edit-error" role="alert">{saveError}</span>}
-      </td>
+      </div>
     )
   }
 
   return (
-    <td
-      className="col-capacity col-capacity--clickable"
-      title="Click to edit weekly hours"
+    <div
+      className="col-capacity--clickable"
+      title="Click to edit"
       onClick={startEdit}
     >
       {weeklyHours}h
-    </td>
+    </div>
+  )
+}
+
+// ── AllocationCell ────────────────────────────────────────────────────────────
+
+function AllocationCell({ data }: { data: WeekData | undefined }) {
+  if (!data) return <span className="cell--empty">—</span>
+  const { allocated_hours, capacity_hours } = data
+  const isOver = capacity_hours > 0 && allocated_hours > capacity_hours
+  const isEmpty = allocated_hours === 0
+  const pct = capacity_hours > 0 ? Math.round((allocated_hours / capacity_hours) * 100) : null
+
+  return (
+    <span
+      className={['cell-value', isOver && 'cell-value--over', isEmpty && 'cell--empty']
+        .filter(Boolean).join(' ')}
+      title={pct != null ? `${pct}% of capacity` : undefined}
+    >
+      {allocated_hours.toFixed(1)}h
+      {isOver && <span className="cell-over-badge">!</span>}
+    </span>
   )
 }
 
@@ -183,30 +169,6 @@ function RangeControls({ from, to, onFromChange, onToChange, onShift }: RangeCon
   )
 }
 
-// ── PersonRow ─────────────────────────────────────────────────────────────────
-
-interface PersonRowProps {
-  person: PersonCapacity
-  weeks: string[]
-}
-
-function PersonRow({ person, weeks }: PersonRowProps) {
-  const hasAnyOver = weeks.some(w => {
-    const d = person.weeks[w]
-    return d && d.capacity_hours > 0 && d.allocated_hours > d.capacity_hours
-  })
-
-  return (
-    <tr className={hasAnyOver ? 'row--over' : ''}>
-      <td className="col-name">{person.name}</td>
-      <CapacityCell personId={person.id} weeklyHours={person.weekly_hours} />
-      {weeks.map(w => (
-        <AllocationCell key={w} data={person.weeks[w]} />
-      ))}
-    </tr>
-  )
-}
-
 // ── CapacityGrid ──────────────────────────────────────────────────────────────
 
 interface Props {
@@ -214,16 +176,102 @@ interface Props {
   to: string
 }
 
+const columnHelper = createColumnHelper<PersonCapacity>()
+
+const ESTIMATED_ROW_HEIGHT = 36
+
 export function CapacityGrid({ from: initialFrom, to: initialTo }: Props) {
   const [from, setFrom] = useState(initialFrom)
   const [to, setTo] = useState(initialTo)
+  const tableContainerRef = useRef<HTMLDivElement>(null)
 
-  const { data, isLoading, isError, error, isFetching } = useCapacity(from, to)
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useCapacity(from, to)
 
-  function shiftWeeks(weeks: number) {
-    setFrom(prev => toISODate(addDays(mondayOf(new Date(prev + 'T00:00:00')), weeks * 7)))
-    setTo(prev => toISODate(addDays(mondayOf(new Date(prev + 'T00:00:00')), weeks * 7 + 6)))
+  // Fix: shift both dates by exactly N*7 days — keeps from/to in sync so
+  // navigating back produces the same cache key (no extra request).
+  function shiftWeeks(n: number) {
+    const days = n * 7
+    setFrom(prev => toISODate(addDays(new Date(prev + 'T00:00:00'), days)))
+    setTo(prev => toISODate(addDays(new Date(prev + 'T00:00:00'), days)))
   }
+
+  const weeks = data?.pages[0]?.weeks ?? []
+  const allPeople = data ? flattenCapacityPages(data.pages) : []
+
+  // Build columns dynamically from the weeks in the response.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const columns: ColumnDef<PersonCapacity, any>[] = [
+    columnHelper.accessor('name', {
+      id: 'name',
+      header: 'Name',
+      size: 220,
+      cell: info => info.getValue(),
+    }),
+    columnHelper.accessor('weekly_hours', {
+      id: 'weekly_hours',
+      header: 'Cap. (h/wk)',
+      size: 110,
+      cell: info => (
+        <CapacityCell
+          personId={info.row.original.id}
+          weeklyHours={info.getValue()}
+        />
+      ),
+    }),
+    ...weeks.map(w =>
+      columnHelper.accessor(row => row.weeks[w], {
+        id: `week_${w}`,
+        header: formatWeekLabel(w),
+        size: 130,
+        cell: info => <AllocationCell data={info.getValue()} />,
+      }),
+    ),
+  ]
+
+  const table = useReactTable({
+    data: allPeople,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+  })
+
+  const { rows } = table.getRowModel()
+
+  // Virtualizer for tbody rows.
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 10,
+  })
+
+  const virtualRows = virtualizer.getVirtualItems()
+  const totalHeight = virtualizer.getTotalSize()
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0
+  const paddingBottom =
+    virtualRows.length > 0
+      ? totalHeight - (virtualRows[virtualRows.length - 1].end ?? 0)
+      : 0
+
+  // Load next page when user scrolls near the bottom.
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      if (!hasNextPage || isFetchingNextPage) return
+      const el = e.currentTarget
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+        fetchNextPage()
+      }
+    },
+    [hasNextPage, isFetchingNextPage, fetchNextPage],
+  )
 
   return (
     <div className="capacity-grid-wrapper">
@@ -243,25 +291,74 @@ export function CapacityGrid({ from: initialFrom, to: initialTo }: Props) {
       )}
 
       {data && (
-        <div className="table-scroll">
-          {isFetching && !isLoading && <p className="status status--fetching">Refreshing…</p>}
-          <table>
-            <thead>
-              <tr>
-                <th className="col-name">Name</th>
-                <th className="col-capacity">Cap. (h/wk)</th>
-                {data.weeks.map(w => (
-                  <th key={w} className="col-week">{formatWeekLabel(w)}</th>
+        <>
+          {isFetching && !isLoading && !isFetchingNextPage && (
+            <p className="status status--fetching">Refreshing…</p>
+          )}
+
+          <div
+            ref={tableContainerRef}
+            className="table-scroll"
+            onScroll={handleScroll}
+          >
+            <table>
+              <thead>
+                {table.getHeaderGroups().map(hg => (
+                  <tr key={hg.id}>
+                    {hg.headers.map(header => (
+                      <th
+                        key={header.id}
+                        style={{ width: header.getSize(), minWidth: header.getSize() }}
+                        className={header.id === 'name' ? 'col-name' : ''}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                      </th>
+                    ))}
+                  </tr>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.people.map(person => (
-                <PersonRow key={person.id} person={person} weeks={data.weeks} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {paddingTop > 0 && (
+                  <tr><td style={{ height: paddingTop }} colSpan={columns.length} /></tr>
+                )}
+                {virtualRows.map(vRow => {
+                  const row = rows[vRow.index]
+                  const hasOver = weeks.some(w => {
+                    const d = row.original.weeks[w]
+                    return d && d.capacity_hours > 0 && d.allocated_hours > d.capacity_hours
+                  })
+                  return (
+                    <tr key={row.id} className={hasOver ? 'row--over' : ''}>
+                      {row.getVisibleCells().map(cell => (
+                        <td
+                          key={cell.id}
+                          style={{ width: cell.column.getSize(), minWidth: cell.column.getSize() }}
+                          className={[
+                            cell.column.id === 'name' ? 'col-name' : '',
+                            cell.column.id.startsWith('week_') ? 'cell' : '',
+                          ].filter(Boolean).join(' ')}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
+                {paddingBottom > 0 && (
+                  <tr><td style={{ height: paddingBottom }} colSpan={columns.length} /></tr>
+                )}
+              </tbody>
+            </table>
+
+            {isFetchingNextPage && (
+              <p className="status status--fetching">Loading more…</p>
+            )}
+          </div>
+          <p className="status">
+            Showing {allPeople.length} people
+            {hasNextPage ? ' — scroll for more' : ''}
+          </p>
+        </>
       )}
     </div>
   )

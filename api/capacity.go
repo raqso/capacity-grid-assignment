@@ -2,41 +2,40 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 )
 
-// WeekRow is one person's data for one ISO week.
-type WeekRow struct {
-	WeekStart  string  `json:"week_start"` // Monday, YYYY-MM-DD
-	PersonID   int     `json:"person_id"`
-	Allocated  float64 `json:"allocated_hours"`
-	Capacity   float64 `json:"capacity_hours"`
-}
-
 // PersonCapacity is one row in the response: person + all weeks.
 type PersonCapacity struct {
-	ID          int                `json:"id"`
-	Name        string             `json:"name"`
-	WeeklyHours float64            `json:"weekly_hours"`
-	Weeks       map[string]WeekData `json:"weeks"` // key: "YYYY-MM-DD" (week Monday)
+	ID          int                  `json:"id"`
+	Name        string               `json:"name"`
+	WeeklyHours float64              `json:"weekly_hours"`
+	Weeks       map[string]WeekData  `json:"weeks"` // key: "YYYY-MM-DD" (week Monday)
 }
 
+// WeekData holds allocation vs capacity for one person for one ISO week.
 type WeekData struct {
-	Allocated float64 `json:"allocated_hours"`
-	Capacity  float64 `json:"capacity_hours"`
+	AllocatedHours float64 `json:"allocated_hours"`
+	CapacityHours  float64 `json:"capacity_hours"`
 }
 
-// CapacityResponse is the top-level response.
+// CapacityResponse is the top-level response for GET /api/capacity.
 type CapacityResponse struct {
-	Weeks  []string         `json:"weeks"` // sorted Monday dates in range
-	People []PersonCapacity `json:"people"`
+	Weeks      []string         `json:"weeks"`       // sorted Monday dates in range
+	People     []PersonCapacity `json:"people"`
+	NextCursor *int             `json:"next_cursor"` // null when no further pages; use as ?after= on next request
 }
 
-// handleCapacity serves GET /api/capacity?from=YYYY-MM-DD&to=YYYY-MM-DD
+// handleCapacity serves GET /api/capacity?from=YYYY-MM-DD&to=YYYY-MM-DD[&limit=N][&after=ID]
 //
-// Returns for every person and every ISO week in the range:
+// Returns for every person (paginated) and every ISO week in the range:
 //   - allocated_hours: sum of (hours_per_day * 8 * overlap_weekdays) across assignments
 //   - capacity_hours:  weekly_hours (same each week unless edited)
+//
+// Pagination: cursor-based on person id (ascending).
+//   - limit: page size (default 100, max 500)
+//   - after: last person id seen (default 0 = start from beginning)
 //
 // hours_per_day is a fraction of a working day (0–1), so multiply by 8 to get hours.
 // Only weekdays (Mon–Fri) count — assignments spanning weekends don't accrue hours on Sat/Sun.
@@ -65,9 +64,25 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Snap from to the Monday of its week so weeks are aligned.
+	// Pagination params.
+	limit := 100
+	afterID := 0
+	if s := q.Get("limit"); s != "" {
+		if v, err2 := strconv.Atoi(s); err2 == nil && v > 0 {
+			if v > 500 {
+				v = 500
+			}
+			limit = v
+		}
+	}
+	if s := q.Get("after"); s != "" {
+		if v, err2 := strconv.Atoi(s); err2 == nil && v >= 0 {
+			afterID = v
+		}
+	}
+
+	// Snap from to Monday of its week; snap to to Sunday of its week.
 	weekStart := mondayOf(from)
-	// Snap to to the Sunday of its week so the last week is fully included.
 	weekEnd := mondayOf(to).AddDate(0, 0, 6)
 
 	// Collect all week-Monday dates in range.
@@ -76,18 +91,8 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		weeks = append(weeks, d.Format("2006-01-02"))
 	}
 
-	// The SQL query:
-	//   For each (person, week) pair, sum assigned hours on weekdays only.
-	//
-	//   We generate the week starts as a series, then for each assignment that
-	//   overlaps a week, count the weekday overlap days and multiply by hours_per_day * 8.
-	//
-	//   ISODOW: 1=Mon … 7=Sun. We want days 1–5 only.
-	//   Overlap: [max(assignment.start, week_monday), min(assignment.end, week_sunday)]
-	//   weekday_count = count of days in that overlap that have ISODOW <= 5.
-	//
-	//   We do this via generate_series on the overlap days (bounded to the week),
-	//   filter to weekdays, and sum hours_per_day * 8.
+	// Cursor-based query: fetch limit+1 rows to detect whether a next page exists.
+	// Inner correlated subquery counts weekday overlap days for each (person, week, assignment).
 	const query = `
 		WITH weeks AS (
 			SELECT generate_series::date AS week_monday
@@ -116,6 +121,7 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN assignments a ON a.person_id = p.id
 				AND a.start_date <= w.week_monday + 6
 				AND a.end_date   >= w.week_monday
+			WHERE p.id > $3
 			GROUP BY p.id, w.week_monday
 		)
 		SELECT
@@ -126,19 +132,23 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 			wa.allocated_hours
 		FROM people p
 		JOIN week_allocations wa ON wa.person_id = p.id
+		WHERE p.id > $3
 		ORDER BY p.id, wa.week_monday
+		LIMIT $4
 	`
 
-	rows, err := s.db.Query(r.Context(), query, weekStart.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
+	// Fetch limit*weeks + 1 rows to detect next page. One person spans len(weeks) rows,
+	// so we ask for (limit+1)*len(weeks) rows and see if we got more than limit people.
+	fetchRows := (limit + 1) * len(weeks)
+
+	rows, err := s.db.Query(r.Context(), query, weekStart.Format("2006-01-02"), weekEnd.Format("2006-01-02"), afterID, fetchRows)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	// Build response. People map keyed by id preserves insertion order via slice.
-	type personKey = int
-	peopleMap := map[personKey]*PersonCapacity{}
+	peopleMap := map[int]*PersonCapacity{}
 	var peopleOrder []int
 
 	for rows.Next() {
@@ -164,13 +174,21 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 		}
 		pc := peopleMap[id]
 		pc.Weeks[weekMonday] = WeekData{
-			Allocated: allocated,
-			Capacity:  weeklyHours,
+			AllocatedHours: allocated,
+			CapacityHours:  weeklyHours,
 		}
 	}
 	if err := rows.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Detect next page: if we collected more than limit people, there's a next cursor.
+	var nextCursor *int
+	if len(peopleOrder) > limit {
+		cursor := peopleOrder[limit-1]
+		nextCursor = &cursor
+		peopleOrder = peopleOrder[:limit]
 	}
 
 	people := make([]PersonCapacity, 0, len(peopleOrder))
@@ -179,8 +197,9 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, CapacityResponse{
-		Weeks:  weeks,
-		People: people,
+		Weeks:      weeks,
+		People:     people,
+		NextCursor: nextCursor,
 	})
 }
 
@@ -188,7 +207,7 @@ func (s *server) handleCapacity(w http.ResponseWriter, r *http.Request) {
 func mondayOf(d time.Time) time.Time {
 	wd := int(d.Weekday()) // 0=Sun, 1=Mon, …, 6=Sat
 	if wd == 0 {
-		wd = 7 // treat Sunday as 7 so Monday is always offset 0
+		wd = 7
 	}
 	return d.AddDate(0, 0, -(wd - 1))
 }

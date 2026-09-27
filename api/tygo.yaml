@@ -1,0 +1,6 @@
+packages:
+  - path: "capacity/api"
+    output_path: "/tmp/generated_api.ts"
+    type_mappings:
+      "float64": "number"
+      "int": "number"
